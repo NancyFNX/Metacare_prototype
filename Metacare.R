@@ -5,7 +5,7 @@ library(shinythemes)
 
 ui <- fluidPage(
   theme = shinytheme("flatly"),
-  titlePanel("Metacare"), 
+  titlePanel("MetaCare"), 
   sidebarLayout(
     sidebarPanel(
       radioButtons(
