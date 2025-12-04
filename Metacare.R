@@ -5,7 +5,7 @@ library(shinythemes)
 
 ui <- fluidPage(
   theme = shinytheme("flatly"),
-  titlePanel("MetaCare"), 
+  titlePanel("Metacare"), 
   sidebarLayout(
     sidebarPanel(
       radioButtons(
@@ -25,8 +25,8 @@ ui <- fluidPage(
         actionButton("add_record", "Add record"),
         hr(),
         h5("Threshold settings"),
-        numericInput("th_sys", "High systolic BP threshold", value = 140, min = 80, max = 250),
-        numericInput("th_glu", "High glucose threshold", value = 180, min = 70, max = 400),
+        numericInput("th_sys", "High systolic BP threshold", value = 120, min = 80, max = 250),
+        numericInput("th_glu", "High glucose threshold", value = 100, min = 70, max = 400),
         helpText("If your latest values exceed these thresholds, the app will show warning pop-ups
                  with lifestyle or medication reminders. Extremely high values will trigger a
                  conceptual 'call 911' confirmation.")),
@@ -79,6 +79,7 @@ server <- function(input, output, session) {
     doc_data = NULL)
   # Critical threshold
   critical_sys <- reactive(180)
+  critical_glu <- reactive(400)
   # Patient data entry
   observeEvent(input$add_record, {
     req(input$p_date)
@@ -89,53 +90,61 @@ server <- function(input, output, session) {
       diastolic = input$p_dia,
       glucose = input$p_glu,
       weight = input$p_weight)
-    vals$patient_data <- bind_rows(vals$patient_data, new_row) |> arrange(date)
+    vals$patient_data <- bind_rows(vals$patient_data, new_row)
     # Check thresholds for pop-up logic
-    latest <- tail(vals$patient_data, 1)
+    latest <- vals$patient_data[nrow(vals$patient_data), ]
     sys_val <- latest$systolic
     glu_val <- latest$glucose
     sys_high <- sys_val >= input$th_sys
     sys_critical <- sys_val >= critical_sys()
+    glu_critical <- glu_val >= critical_glu()
     glu_high <- glu_val >= input$th_glu
     # 1) Extremely high systolic BP
-    if (sys_critical) {
+    if (sys_critical || glu_critical) {
+      # 1) Emergency condition
       showModal(
         modalDialog(
-          title = "Blood Pressure Abnormally High",
+          title = "Emergency Level Values",
           tagList(
-            p(
-              paste0("Your latest systolic blood pressure reading is ",
-                     sys_val, " mmHg, which is abnormally high.")),
+            p(paste0(
+              "Your latest readings are critically high.",
+              " Systolic: ", sys_val, " mmHg; Glucose: ", glu_val, " mg/dL."
+            )),
             p("If you are experiencing symptoms such as chest pain, severe shortness of breath, confusion, or weakness, this could be a medical emergency."),
-            strong("This prototype cannot make clinical decisions, but in a real app this is where an emergency workflow would be triggered.")),
+            strong("This prototype cannot make clinical decisions, but in a real app this is where an emergency workflow would be triggered.")
+          ),
           footer = tagList(
             modalButton("Cancel"),
-            actionButton("confirm_call_911", "Confirm to call 911")),
-          easyClose = TRUE))
-    } else if (sys_high || glu_high) {
-      # 2) Slihtly above regular threshold(s)
-      probs <- c()
-      if (sys_high) probs <- c(probs, "blood pressure")
-      if (glu_high) probs <- c(probs, "fasting glucose")
-      showModal(
-        modalDialog(
-          title = "Values Higher Than Your Usual Range",
-          tagList(
-            p(
-              paste(
-                "Your latest reading is above the threshold for:",
-                paste(probs, collapse = " and "), "."
-              )
-            ),
-            tags$ul(
-              if (sys_high) tags$li("Review your blood pressure plan (medications, sodium intake, stress management)."),
-              if (glu_high) tags$li("Review recent meals and your glucose management plan.")
-            ),
-            p("Consider taking a short walk, practicing relaxation, or following the plan discussed with your clinician."),
-            p("If you feel unwell or symptoms are severe, contact a healthcare professional or follow your emergency plan.")
+            actionButton("confirm_call_911", "Confirm to call 911")
           ),
-          easyClose = TRUE,
-          footer = modalButton("OK")))}})
+          easyClose = TRUE
+        )
+      )
+      } else if (sys_high || glu_high) {
+        # 2) Higher than normal but not yet emergency
+        probs <- c()
+        if (sys_high) probs <- c(probs, "blood pressure")
+        if (glu_high) probs <- c(probs, "fasting glucose")
+        
+        showModal(
+          modalDialog(
+            title = "Values Higher Than Your Usual Range",
+            tagList(
+              p(
+                paste(
+                  "Your latest reading is above the threshold for:",
+                  paste(probs, collapse = " and "), "."
+                )
+              ),
+              tags$ul(
+                if (sys_high) tags$li("Review your blood pressure plan (medications, sodium intake, stress management)."),
+                if (glu_high) tags$li("Review recent meals and your glucose management plan.")
+              ),
+              p("Consider taking a short walk, practicing relaxation, or following the plan discussed with your clinician."),
+              p("If you feel unwell or symptoms are severe, contact a healthcare professional or follow your emergency plan.")
+            ),
+            easyClose = TRUE,
+            footer = modalButton("OK")))}})
   # "Confirm to call 911"
   observeEvent(input$confirm_call_911, {
     removeModal()
@@ -149,7 +158,7 @@ server <- function(input, output, session) {
   # Patient alert page
   output$patient_alert <- renderUI({
     if (nrow(vals$patient_data) == 0) return(NULL)
-    latest <- tail(vals$patient_data, 1)
+    latest <- vals$patient_data[nrow(vals$patient_data), ]
     sys_high <- latest$systolic >= input$th_sys
     glu_high <- latest$glucose >= input$th_glu
     if (!sys_high && !glu_high) {
@@ -171,7 +180,7 @@ server <- function(input, output, session) {
   #Trend
   output$patient_bp_trend <- renderPlot({
     req(nrow(vals$patient_data) > 0)
-    df <- vals$patient_data
+    df <- vals$patient_data |> arrange(date)
     ggplot(df, aes(x = date)) +
       geom_line(aes(y = systolic, color = "Systolic")) +
       geom_point(aes(y = systolic, color = "Systolic")) +
@@ -188,7 +197,7 @@ server <- function(input, output, session) {
       theme_minimal()})
   output$patient_glu_trend <- renderPlot({
     req(nrow(vals$patient_data) > 0)
-    df <- vals$patient_data
+    df <- vals$patient_data |> arrange(date)
     ggplot(df, aes(x = date)) +
       geom_line(aes(y = glucose)) +
       geom_point(aes(y = glucose)) +
@@ -200,7 +209,7 @@ server <- function(input, output, session) {
       theme_minimal()})
   output$patient_table <- renderTable({
     req(vals$patient_data)
-    df <- vals$patient_data
+    df <- vals$patient_data |> arrange(date)
     df$date <- as.Date(df$date, origin = "1970-01-01")
     df$date <- format(df$date, "%Y-%m-%d")
     df})
